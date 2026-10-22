@@ -1,0 +1,17 @@
+
+# Web API banane ke liye.
+fastapi
+# FastAPI app ko server par chalane ke liye.
+uvicorn[standard]
+# Database ke saath kaam karne ke liye.
+sqlalchemy
+# Data validation aur settings models ke liye.
+pydantic
+# Environment variables aur .env file se settings parhne ke liye.
+pydantic-settings
+# Websites crawl aur scrape karne ke liye.
+crawl4ai
+# Google Gemini AI model ke saath connect karne ke liye.
+google-genai
+# HTTP requests bhejne ke liye.
+httpx
