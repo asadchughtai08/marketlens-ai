@@ -5,11 +5,9 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
-
 from app.db.base import SessionLocal
-from app.db.models import Claim, Competitor, Item, Snapshot
 from app.services import pipeline
 
 router = APIRouter()
@@ -38,6 +36,9 @@ class PasteIn(BaseModel):
 class ReviewIn(BaseModel):
     status: Literal["approved", "rejected"]
 
+class MergeIn(BaseModel):
+    into_id: int
+    
 
 # ---- Competitors ----
 @router.get("/competitors")
