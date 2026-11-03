@@ -157,6 +157,13 @@ class Claim(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     # pending = review chahiye, approved, rejected
     review_status: Mapped[str] = mapped_column(String(20), default="pending")
+    # Verifier ka faisla: verified / weak / unsupported (None = abhi verify nahi hua)
+    verdict: Mapped[str | None] = mapped_column(String(20))
+    # Wajohat ke codes, jaise ["quote_exact", "brand_not_on_page"]
+    reasons: Mapped[list | None] = mapped_column(JSON, default=list)
+    # LLM ki asli confidence (confidence column ab rules ke baad ki final value hai)
+    llm_confidence: Mapped[float | None] = mapped_column(Float)
+
 
     item: Mapped[Item] = relationship(back_populates="claims")
 

@@ -38,7 +38,7 @@ class ReviewIn(BaseModel):
 
 class MergeIn(BaseModel):
     into_id: int
-    
+
 
 # ---- Competitors ----
 @router.get("/competitors")
@@ -74,12 +74,15 @@ def list_items(comp_id: int, category: str | None = None,
             "id": it.id, "kind": it.kind, "name": it.name,
             "brand": it.brand, "model": it.model, "capacity": it.capacity,
             "specs": it.specs, "category": it.suggested_category,
+            "approved_category": it.category.name if it.category else None,
+            "category_status": it.category.status if it.category else None,
             "first_seen_at": it.first_seen_at, "is_active": it.is_active,
             "evidence": None if claim is None else {
                 "claim_id": claim.id, "quote": claim.quote,
                 "source_url": claim.source_url,
                 "confidence": claim.confidence,
-                "review_status": claim.review_status},
+                "review_status": claim.review_status,
+                "verdict": claim.verdict, "reasons": claim.reasons,},
         })
     return out
 
@@ -114,7 +117,7 @@ def review_queue(db: Session = Depends(get_db)):
         .order_by(Claim.confidence)).all()
     return [{"claim_id": c.id, "company_id": it.competitor_id, "item": it.name,
              "confidence": c.confidence, "quote": c.quote,
-             "source_url": c.source_url} for c, it in rows]
+             "source_url": c.source_url, "verdict": c.verdict, "reasons": c.reasons} for c, it in rows]
 
 
 @router.post("/claims/{claim_id}/review")
@@ -125,3 +128,43 @@ def review_claim(claim_id: int, body: ReviewIn, db: Session = Depends(get_db)):
     claim.review_status = body.status
     db.commit()
     return {"claim_id": claim_id, "review_status": claim.review_status}
+
+# ---- Categories ----
+@router.get("/categories")
+def list_categories(status: str | None = None, db: Session = Depends(get_db)):
+    q = (select(Category, func.count(Item.id))
+         .outerjoin(Item, Item.category_id == Category.id)
+         .group_by(Category.id).order_by(Category.name))
+    if status:
+        q = q.where(Category.status == status)
+    return [{"id": c.id, "name": c.name, "status": c.status,
+             "aliases": c.aliases, "items": n} for c, n in db.execute(q).all()]
+
+
+@router.post("/categories/relink")
+def relink_categories(db: Session = Depends(get_db)):
+    return cats.relink_all_items(db)
+
+
+@router.post("/categories/{category_id}/approve")
+def approve_category(category_id: int, db: Session = Depends(get_db)):
+    try:
+        cat = cats.approve_category(db, category_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"id": cat.id, "name": cat.name, "status": cat.status}
+
+
+@router.post("/categories/{category_id}/merge")
+def merge_category(category_id: int, body: MergeIn, db: Session = Depends(get_db)):
+    try:
+        tgt = cats.merge_category(db, category_id, body.into_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"merged_into": tgt.name, "aliases": tgt.aliases}
+
+@router.get("/verification/summary")
+def verification_summary(db: Session = Depends(get_db)):
+    rows = db.execute(select(Claim.verdict, func.count(Claim.id))
+                      .group_by(Claim.verdict)).all()
+    return {(v or "unverified"): n for v, n in rows}

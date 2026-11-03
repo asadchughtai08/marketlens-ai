@@ -1,4 +1,3 @@
-
 # app/tools/store.py
 # Kaam: extracted items ko DB mein save karna (items + claims).
 # Ek item sirf ek baar banta hai; dobara dikhe to sirf last_seen update hota hai.
@@ -6,15 +5,15 @@ from sqlalchemy import select
 
 from app.db.models import Claim, Competitor, Item, Snapshot, now
 from app.schemas.extraction import ExtractionResult
-from app.tools.normalize import normalize_name, quote_in_text
-
-# Isse kam confidence = insaan ki review chahiye
-REVIEW_THRESHOLD = 0.7
+from app.tools.categories import resolve_category
+from app.tools.normalize import normalize_name
+from app.tools.verifier import verify
 
 
 def save_items(db, comp: Competitor, snap: Snapshot,
                result: ExtractionResult, page_text: str) -> dict:
-    stats = {"new": 0, "seen_again": 0, "pending_review": 0, "skipped": 0}
+    stats = {"new": 0, "seen_again": 0, "pending_review": 0, "skipped": 0,
+             "proposed_categories": 0, "verified": 0, "weak": 0, "unsupported": 0}
     seen_in_run = set()
 
     for it in result.items:
@@ -25,15 +24,18 @@ def save_items(db, comp: Competitor, snap: Snapshot,
             continue
         seen_in_run.add(norm)
 
-        # Confidence 0 se 1 ke andar rakho
-        conf = max(0.0, min(1.0, it.confidence))
-        # Grounding check: quote page mein nahi mili = shak, confidence gira do
-        verified = quote_in_text(it.quote, page_text)
-        if not verified:
-            conf = min(conf, 0.3)
-        review = "approved" if (verified and conf >= REVIEW_THRESHOLD) else "pending"
-        if review == "pending":
+        # Evidence Verifier: rules se saboot check
+        llm_conf = max(0.0, min(1.0, it.confidence))
+        res = verify(it.name, it.brand, it.model, it.capacity,
+                     it.quote, page_text, llm_conf)
+        stats[res.verdict] += 1
+        if res.review_status == "pending":
             stats["pending_review"] += 1
+
+        # Agent ki category ko approved category se jodo (ya proposed banao)
+        cat_id, how = resolve_category(db, it.suggested_category)
+        if how == "proposed_new":
+            stats["proposed_categories"] += 1
 
         # Pehle se maujood item?
         item = db.scalar(select(Item).where(
@@ -42,6 +44,7 @@ def save_items(db, comp: Competitor, snap: Snapshot,
         if item is None:
             item = Item(
                 competitor_id=comp.id,
+                category_id=cat_id,
                 kind=it.kind,
                 name=it.name,
                 normalized_name=norm,
@@ -61,6 +64,8 @@ def save_items(db, comp: Competitor, snap: Snapshot,
             item.last_seen_snapshot_id = snap.id
             item.last_seen_at = now()
             item.is_active = True
+            if item.category_id is None and cat_id is not None:
+                item.category_id = cat_id
             stats["seen_again"] += 1
 
         db.flush()  # item.id chahiye claim ke liye
@@ -69,8 +74,11 @@ def save_items(db, comp: Competitor, snap: Snapshot,
             snapshot_id=snap.id,
             source_url=snap.url,
             quote=it.quote[:500],
-            confidence=conf,
-            review_status=review,
+            confidence=res.confidence,
+            llm_confidence=llm_conf,
+            verdict=res.verdict,
+            reasons=res.reasons,
+            review_status=res.review_status,
         ))
 
     db.commit()
